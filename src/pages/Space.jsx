@@ -38,7 +38,16 @@ export default function Space() {
   const chatEndRef = useRef(null);
   const joinTimeRef = useRef(Date.now());
 
-  const pcConfig = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] };
+  const pcConfig = {
+  iceServers: [
+    { urls: "stun:stun.l.google.com:19302" },
+    {
+      urls: "turn:your-turn-server.com",
+      username: "user",
+      credential: "pass"
+    }
+  ]
+};
   const spaceRef = doc(db, "spaces", spaceId);
 
   // --- 1. CHAT MESSAGE LISTENER (RESTORED) ---
@@ -59,17 +68,18 @@ export default function Space() {
     const myPresenceRef = ref(rtdb, `spaces/${spaceId}/presence/${myId}`);
 
     const userPresenceData = {
-      id: myId,
-      name: userProfile.displayName || "Anonymous",
-      color: userProfile.color || "#6366f1",
-      photoURL: userProfile.photoURL || null,
-      joinedAt: joinTimeRef.current,
-      muted: isMuted,
-    };
+  id: myId,
+  name: userProfile.displayName || "Anonymous",
+  color: userProfile.color || "#6366f1",
+  photoURL: userProfile.photoURL || null,
+  joinedAt: joinTimeRef.current,
+  muted: isMuted,
+  camOff: isCamOff, // 👈 ADD THIS
+};
 
     set(myPresenceRef, userPresenceData);
     onDisconnect(myPresenceRef).remove();
-  }, [spaceId, userProfile, isMuted]);
+}, [spaceId, userProfile, isMuted, isCamOff]);
 
   // --- 3. GHOST REMOVAL ---
   useEffect(() => {
@@ -183,14 +193,38 @@ export default function Space() {
 
     const remotePresenceRef = ref(rtdb, `spaces/${spaceId}/presence/${remoteUserId}`);
     onValue(remotePresenceRef, (snapshot) => {
-      const data = snapshot.val();
-      if (data) muteIndicator.style.display = data.muted ? "flex" : "none";
-    });
+  const data = snapshot.val();
+  if (!data) return;
+
+  // Mute indicator
+  muteIndicator.style.display = data.muted ? "flex" : "none";
+
+  // 👇 CAMERA LOGIC
+  if (data.camOff) {
+    video.style.display = "none";
+    avatar.style.display = "flex";
+  } else {
+    video.style.display = "block";
+    avatar.style.display = "none";
+  }
+});
 
     const avatar = document.createElement("div");
     avatar.innerText = remoteUser.name?.[0].toUpperCase() || "U";
-    avatar.style.cssText = `position: absolute; width: 80px; height: 80px; border-radius: 50%; background: ${remoteUser.color || '#6366f1'}; display: flex; align-items: center; justify-content: center; font-size: 2rem; font-weight: bold; color: white;`;
-
+   avatar.style.cssText = `
+  position: absolute;
+  width: 80px;
+  height: 80px;
+  border-radius: 50%;
+  background: ${remoteUser.color || '#6366f1'};
+  display: none; /* 👈 hidden until cam off */
+  align-items: center;
+  justify-content: center;
+  font-size: 2rem;
+  font-weight: bold;
+  color: white;
+  z-index: 5;
+`;
     const video = document.createElement("video");
     video.autoplay = true;
     video.playsInline = true;
@@ -332,28 +366,150 @@ export default function Space() {
 
       <main style={{ flex: 1, display: "flex", overflow: "hidden" }}>
         {/* SIDEBAR MESSAGES */}
-        <aside style={{ width: isChatOpen ? "350px" : "0", transition: "width 0.3s", background: "#0f172a", borderRight: "1px solid #1e293b", display: "flex", flexDirection: "column" }}>
-          <div style={{ flex: 1, overflowY: "auto", padding: "20px", display: "flex", flexDirection: "column", gap: "12px" }}>
-            {messages.map((m) => (
-              <div key={m.id} style={{ alignSelf: m.senderId === auth.currentUser?.uid ? "flex-end" : "flex-start", maxWidth: "80%" }}>
-                <div style={{ fontSize: "0.7rem", color: "#94a3b8", marginBottom: "4px" }}>{m.senderName}</div>
-                <div style={{ background: m.senderId === auth.currentUser?.uid ? "#6366f1" : "#1e293b", padding: "10px 14px", borderRadius: "12px", fontSize: "0.9rem" }}>
-                  {m.text}
-                </div>
-              </div>
-            ))}
-            <div ref={chatEndRef} />
+        {/* SIDEBAR MESSAGES */}
+<aside
+  style={{
+    width: isChatOpen ? "350px" : "60px",
+    transition: "width 0.3s ease",
+    background: "#0f172a",
+    borderRight: "1px solid #1e293b",
+    display: "flex",
+    flexDirection: "column",
+    overflow: "hidden",
+  }}
+>
+  {/* CHAT HEADER */}
+  <div
+    style={{
+      height: "60px",
+      borderBottom: isChatOpen ? "1px solid #1e293b" : "none",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: isChatOpen ? "space-between" : "center",
+      padding: isChatOpen ? "0 20px" : "0",
+      fontWeight: "600",
+      fontSize: "1rem",
+    }}
+  >
+    {isChatOpen && <span>Space Chat</span>}
+
+    {/* TOGGLE BUTTON */}
+    <button
+      onClick={() => setIsChatOpen(!isChatOpen)}
+      style={{
+        background: "transparent",
+        border: "none",
+        color: "#94a3b8",
+        cursor: "pointer",
+        fontSize: "1.3rem",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        width: "40px",
+        height: "40px",
+      }}
+    >
+      <FiSidebar />
+    </button>
+  </div>
+
+  {/* CHAT CONTENT (ONLY WHEN OPEN) */}
+  {isChatOpen && (
+    <>
+      <div
+  style={{
+    flex: 1,
+    overflowY: "auto",
+    padding: "20px",
+    display: "flex",
+    flexDirection: "column",
+    gap: "12px",
+    scrollbarWidth: "none",        // Firefox
+    msOverflowStyle: "none",       // IE/Edge
+  }}
+  className="hide-scrollbar"
+>
+        {messages.map((m) => (
+          <div
+            key={m.id}
+            style={{
+              alignSelf:
+                m.senderId === auth.currentUser?.uid
+                  ? "flex-end"
+                  : "flex-start",
+              maxWidth: "80%",
+            }}
+          >
+            <div
+              style={{
+                fontSize: "0.7rem",
+                color: "#94a3b8",
+                marginBottom: "4px",
+              }}
+            >
+              {m.senderName}
+            </div>
+            <div
+              style={{
+                background:
+                  m.senderId === auth.currentUser?.uid
+                    ? "#6366f1"
+                    : "#1e293b",
+                padding: "10px 14px",
+                borderRadius: "12px",
+                fontSize: "0.9rem",
+              }}
+            >
+              {m.text}
+            </div>
           </div>
-          <form onSubmit={sendMessage} style={{ padding: "20px", borderTop: "1px solid #1e293b", display: "flex", gap: "8px" }}>
-            <input value={newMessage} onChange={(e) => setNewMessage(e.target.value)} placeholder="Type a message..." style={{ flex: 1, background: "#1e293b", border: "none", padding: "10px", borderRadius: "8px", color: "white" }} />
-            <button type="submit" style={{ background: "#6366f1", border: "none", padding: "10px", borderRadius: "8px", color: "white" }}><FiSend /></button>
-          </form>
-        </aside>
+        ))}
+        <div ref={chatEndRef} />
+      </div>
+
+      <form
+        onSubmit={sendMessage}
+        style={{
+          padding: "20px",
+          borderTop: "1px solid #1e293b",
+          display: "flex",
+          gap: "8px",
+        }}
+      >
+        <input
+          value={newMessage}
+          onChange={(e) => setNewMessage(e.target.value)}
+          placeholder="Type a message..."
+          style={{
+            flex: 1,
+            background: "#1e293b",
+            border: "none",
+            padding: "10px",
+            borderRadius: "8px",
+            color: "white",
+          }}
+        />
+        <button
+          type="submit"
+          style={{
+            background: "#6366f1",
+            border: "none",
+            padding: "10px",
+            borderRadius: "8px",
+            color: "white",
+          }}
+        >
+          <FiSend />
+        </button>
+      </form>
+    </>
+  )}
+</aside>
 
         {/* VIDEO AREA */}
         <section style={{ flex: 1, position: "relative", display: "flex", alignItems: "center", justifyContent: "center", background: "#000" }}>
           <div id="remote-videos" style={{ display: "grid", gap: "20px", width: "100%", height: "100%", gridTemplateColumns: remoteUsers.length === 0 ? "1fr" : "repeat(auto-fit, minmax(400px, 1fr))" }}></div>
-
+    
           {/* LOCAL PREVIEW */}
           <div style={ remoteUsers.length === 0 ? { position: "absolute", inset: 0 } : { position: "absolute", bottom: "30px", right: "30px", width: "240px", height: "180px", borderRadius: "20px", overflow: "hidden", border: "3px solid #6366f1", zIndex: 10 }}>
             <video ref={localVideoRef} autoPlay playsInline muted style={{ width: "100%", height: "100%", objectFit: "cover", transform: "scaleX(-1)", display: isCamOff ? "none" : "block" }} />
@@ -365,7 +521,7 @@ export default function Space() {
             <button style={btnStyle(isMuted)} onClick={toggleMute}>{isMuted ? <FiMicOff /> : <FiMic />}</button>
             <button style={endCallStyle} onClick={leaveSpace}><FiPhoneMissed /></button>
             <button style={btnStyle(isCamOff)} onClick={toggleCamera}>{isCamOff ? <FiVideoOff /> : <FiVideo />}</button>
-            <button style={btnStyle(!isChatOpen)} onClick={() => setIsChatOpen(!isChatOpen)}><FiSidebar /></button>
+          
           </div>
         </section>
       </main>
